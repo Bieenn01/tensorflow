@@ -390,7 +390,7 @@ TEST_F(MlirRowReductionTest, NonPowerOfTwoRowReduction) {
     // CHECK: %[[FULL_TILES:.*]] = scf.for %[[I:.*]] = %[[C0]] to %[[C4]] step %[[C1]]
     // CHECK-NEXT: scf.for %[[J:.*]] = %[[C0]] to %[[C2]] step %[[C1]]
     // CHECK-NOT: scf.if
-    // CHECK: xla_gpu.apply_indexing #[[MAP1]](%[[J]] in [0, 2), %thread_id_x in [0, 256))[%[[I]] in [0, 5)]
+    // CHECK: xla_gpu.apply_indexing #[[MAP1]](%[[J]] in [0, 2), %thread_id_x in [0, 256))[%[[I]] in [0, 4)]
     // CHECK: scf.for %[[J:.*]] = %[[C0]] to %[[C2]] step %[[C1]] iter_args(%{{.*}} = %[[FULL_TILES]])
     // CHECK: scf.if
     // CHECK: xla_gpu.apply_indexing #[[MAP2]](%[[J]] in [0, 2), %thread_id_x in [0, 256))
@@ -876,6 +876,42 @@ TEST_F(MlirRowReductionTest, LargeToUnit) {
       ROOT reduce = pred[] reduce(p0, c1), dimensions={0}, to_apply=and
     }
   )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirRowReductionTest, MOFTwoVariadic) {
+  // Regression test for a compilation crash with a MOF with two variadic
+  // reductions.
+  constexpr auto kHloString = R"(
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      p2 = f32[] parameter(2)
+      p3 = f32[] parameter(3)
+      a = f32[] add(p0, p2)
+      b = f32[] add(p1, p3)
+      ROOT out = (f32[], f32[]) tuple(a, b)
+    }
+
+    fused_reduce {
+      p0 = f32[3,2] parameter(0)
+      p1 = f32[3,2] parameter(1)
+      c0 = f32[] constant(0)
+      iota0 = f32[3,2] iota(), iota_dimension=1
+      iota1 = f32[3,2] iota(), iota_dimension=1
+      reduce0 = (f32[3], f32[3]) reduce(p0, iota0, c0, c0), dimensions={1},
+          to_apply=add
+      reduce1 = (f32[3], f32[3]) reduce(p1, iota1, c0, c0), dimensions={1},
+          to_apply=add
+      ROOT tuple = ((f32[3], f32[3]), (f32[3], f32[3])) tuple(reduce0, %reduce1)
+    }
+
+    ENTRY main {
+      p0 = f32[3,2] parameter(0)
+      p1 = f32[3,2] parameter(1)
+      ROOT fusion = ((f32[3], f32[3]), (f32[3], f32[3])) fusion(p0, p1),
+        kind=kInput, calls=fused_reduce
+    })";
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
